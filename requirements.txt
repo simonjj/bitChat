@@ -1,3 +1,4 @@
 fastapi
 uvicorn
-transformers
+git+https://github.com/shumingma/transformers.git
+
