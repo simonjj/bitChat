@@ -56,16 +56,16 @@ const MessageList: React.FC<MessageListProps> = ({ messages, loading, streamingC
               <ReactMarkdown
                 components={{
                   // Custom styling for code blocks
-                  code({ node, inline, className, children, ...props }) {
+                  code({ node, className, children, ...props }) {
                     const match = /language-(\w+)/.exec(className || '');
-                    if (inline) {
+                    // Remove the 'inline' reference and use props.inline if needed
+                    if ((props as any).inline) {
                       return (
                         <code className={className} {...props}>
                           {children}
                         </code>
                       );
                     }
-                    
                     return (
                       <pre>
                         <code className={match ? `language-${match[1]}` : ''} {...props}>

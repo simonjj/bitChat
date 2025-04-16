@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import "./App.css";
 import { Welcome, MessageList, ChatInput, Message } from "./components/Chat";
 import Paper from '@mui/material/Paper';
