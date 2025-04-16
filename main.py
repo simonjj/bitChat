@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, AsyncIterable
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +8,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 import os
 import asyncio
-from sse_starlette.sse import EventSourceResponse
 
 app = FastAPI()
 
@@ -86,7 +85,7 @@ class ChatRequest(BaseModel):
     messages: List[Dict[str, str]]
     max_new_tokens: int = 500
 
-async def generate_stream(messages: List[Dict[str, str]], max_new_tokens: int = 500):
+async def generate_stream(messages: List[Dict[str, str]], max_new_tokens: int = 500) -> AsyncIterable[str]:
     # Create a system message if one doesn't exist
     has_system = any(msg["role"] == "system" for msg in messages)
     if not has_system:
@@ -134,22 +133,18 @@ async def generate_stream(messages: List[Dict[str, str]], max_new_tokens: int = 
                 # Update input_ids for next token generation
                 input_ids = outputs
                 
-                # Yield the token text for streaming in SSE format
-                yield f"data: {token_text}\n\n"
+                # Yield the token text directly, no SSE formatting
+                yield token_text
                 
                 # Small delay to control stream rate
                 await asyncio.sleep(0.01)
-        
-        # Send a completion signal
-        yield "data: [DONE]\n\n"
         
         # Debug output
         print(f"Generated streaming response complete: {streamer_output}")
         
     except Exception as e:
         print(f"Error in generate_stream: {str(e)}")
-        yield f"data: I'm sorry, I encountered an error while generating a response.\n\n"
-        yield "data: [DONE]\n\n"
+        yield "I'm sorry, I encountered an error while generating a response."
 
 @app.post("/chat")
 def chat_endpoint(request: ChatRequest):
@@ -158,5 +153,7 @@ def chat_endpoint(request: ChatRequest):
 
 @app.post("/chat/stream")
 async def chat_stream_endpoint(request: ChatRequest):
-    generator = generate_stream(request.messages, request.max_new_tokens)
-    return EventSourceResponse(generator)
+    return StreamingResponse(
+        generate_stream(request.messages, request.max_new_tokens),
+        media_type="text/plain"
+    )

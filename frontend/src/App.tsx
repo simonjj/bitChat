@@ -45,7 +45,7 @@ function App() {
     setMessages(prev => [...prev, streamingMessage]);
     
     try {
-      // Use fetch with proper streaming approach
+      // Use fetch with proper streaming approach for plain text
       const response = await fetch(STREAM_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -74,28 +74,22 @@ function App() {
         const { done, value } = await reader.read();
         if (done) break;
         
-        // Decode the chunk and extract data from server-sent events format
+        // Decode the chunk as plain text
         const chunk = decoder.decode(value, { stream: true });
-        const dataLines = chunk.split("\n").filter(line => line.startsWith("data: "));
         
-        for (const line of dataLines) {
-          const data = line.substring(6); // Remove "data: " prefix
-          if (data === "[DONE]") continue;
-          
-          // Add token to the response
-          assistantResponse += data;
-          setStreamingContent(assistantResponse);
-          
-          // Update the last message (which is the assistant's response)
-          setMessages(prev => {
-            const updatedMessages = [...prev];
-            updatedMessages[updatedMessages.length - 1] = {
-              role: "assistant", 
-              content: assistantResponse
-            };
-            return updatedMessages;
-          });
-        }
+        // Add token to the response
+        assistantResponse += chunk;
+        setStreamingContent(assistantResponse);
+        
+        // Update the last message (which is the assistant's response)
+        setMessages(prev => {
+          const updatedMessages = [...prev];
+          updatedMessages[updatedMessages.length - 1] = {
+            role: "assistant", 
+            content: assistantResponse
+          };
+          return updatedMessages;
+        });
       }
       
     } catch (err) {
