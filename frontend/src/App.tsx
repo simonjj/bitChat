@@ -1,83 +1,181 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./App.css";
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
+import { Welcome, MessageList, ChatInput, Message } from "./components/Chat";
+import Paper from '@mui/material/Paper';
+import Grow from '@mui/material/Grow';
 
 const API_URL = "/chat";
+const STREAM_API_URL = "/chat/stream";
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
-
+  const [chatStarted, setChatStarted] = useState(false);
+  const [streamingContent, setStreamingContent] = useState<string>("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Auto-scroll chat to bottom when new messages arrive
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (messages.length > 0 && !chatStarted) {
+      setChatStarted(true);
+    }
+    
+    // Apply a small delay to ensure DOM updates before scrolling
+    const scrollTimeout = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+    
+    return () => clearTimeout(scrollTimeout);
+  }, [messages, chatStarted, loading, streamingContent]);
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-    const newMessages = [
-      ...messages,
-      { role: "user" as "user", content: input }
-    ];
-    setMessages(newMessages);
-    setInput("");
+  const handleSendMessage = async (inputText: string) => {
+    if (!inputText.trim()) return;
+    
+    const userMessage: Message = { role: "user", content: inputText };
+    
+    // Immediately update messages with user message
+    setMessages(prev => [...prev, userMessage]);
     setLoading(true);
+    setStreamingContent(""); // Reset streaming content
+    
+    // Create a temporary assistant message with empty content that will be streamed
+    const streamingMessage: Message = { role: "assistant", content: "" };
+    
+    // Add the empty assistant message to messages
+    setMessages(prev => [...prev, streamingMessage]);
+    
     try {
-      const res = await fetch(API_URL, {
+      // Use fetch with proper streaming approach
+      const response = await fetch(STREAM_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ 
+          messages: [...messages, userMessage],
+          max_new_tokens: 500
+        }),
       });
-      const data = await res.json();
-      setMessages([
-        ...newMessages,
-        { role: "assistant" as "assistant", content: data.response }
-      ]);
+      
+      if (!response.ok) {
+        throw new Error(`Server responded with ${response.status}`);
+      }
+      
+      // Get the response as a readable stream
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get stream reader");
+      }
+      
+      // Create a decoder to convert the binary stream to text
+      const decoder = new TextDecoder();
+      let assistantResponse = "";
+      
+      // Read the stream chunk by chunk
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        // Decode the chunk and extract data from server-sent events format
+        const chunk = decoder.decode(value, { stream: true });
+        const dataLines = chunk.split("\n").filter(line => line.startsWith("data: "));
+        
+        for (const line of dataLines) {
+          const data = line.substring(6); // Remove "data: " prefix
+          if (data === "[DONE]") continue;
+          
+          // Add token to the response
+          assistantResponse += data;
+          setStreamingContent(assistantResponse);
+          
+          // Update the last message (which is the assistant's response)
+          setMessages(prev => {
+            const updatedMessages = [...prev];
+            updatedMessages[updatedMessages.length - 1] = {
+              role: "assistant", 
+              content: assistantResponse
+            };
+            return updatedMessages;
+          });
+        }
+      }
+      
     } catch (err) {
-      setMessages([
-        ...newMessages,
-        { role: "assistant" as "assistant", content: "Error: Could not get response." }
-      ]);
+      console.error("Error with streaming:", err);
+      // Fallback to non-streaming API if streaming fails
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: [...messages, userMessage] }),
+        });
+        
+        const data = await res.json();
+        
+        setMessages(prev => {
+          const updatedMessages = [...prev];
+          updatedMessages[updatedMessages.length - 1] = {
+            role: "assistant", 
+            content: data.response
+          };
+          return updatedMessages;
+        });
+      } catch (fallbackErr) {
+        setMessages(prev => {
+          const updatedMessages = [...prev];
+          updatedMessages[updatedMessages.length - 1] = {
+            role: "assistant", 
+            content: "Error: Could not get response."
+          };
+          return updatedMessages;
+        });
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const handleNewChat = () => {
+    setMessages([]);
+    setChatStarted(false);
+    setStreamingContent("");
+  };
+
   return (
-    <div className="chat-container">
-      <div className="chat-header">bitChat</div>
-      <div className="chat-history">
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`chat-message ${msg.role}`}>
-            <div className="chat-bubble">{msg.content}</div>
-          </div>
-        ))}
-        {loading && (
-          <div className="chat-message assistant">
-            <div className="chat-bubble">...</div>
-          </div>
+    <div className={`app-container${chatStarted ? " chat-started" : " chat-initial"}`}>
+      <div className="chat-container">
+        {!chatStarted ? (
+          <Grow in timeout={500}>
+            <Paper elevation={6} className="welcome-card">
+              <div className="center-stack">
+                <Welcome />
+                <div className="centered-input-section">
+                  <ChatInput
+                    onSendMessage={handleSendMessage}
+                    onNewChat={handleNewChat}
+                    loading={loading}
+                    showNewChatButton={false}
+                  />
+                </div>
+              </div>
+            </Paper>
+          </Grow>
+        ) : (
+          <>
+            <MessageList 
+              messages={messages} 
+              loading={loading}
+              streamingContent={streamingContent}
+            />
+            <div className="docked-input-section" ref={messagesEndRef}>
+              <ChatInput
+                onSendMessage={handleSendMessage}
+                onNewChat={handleNewChat}
+                loading={loading}
+                showNewChatButton={messages.length > 0}
+              />
+            </div>
+          </>
         )}
-        <div ref={chatEndRef} />
       </div>
-      <form className="chat-input-row" onSubmit={sendMessage}>
-        <input
-          className="chat-input"
-          type="text"
-          placeholder="Type your message..."
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          disabled={loading}
-        />
-        <button className="send-btn" type="submit" disabled={loading || !input.trim()}>
-          Send
-        </button>
-      </form>
     </div>
   );
 }
